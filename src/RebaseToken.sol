@@ -25,6 +25,10 @@ contract RebaseToken is ERC20 {
     emit InterestRateChanged(_interestRate);
   }
 
+  function principleBalance(address _user) external view returns (uint256) {
+    return super.balanceOf(_user);
+  }
+
   function mint(address _to, uint256 _amount) external {
     _mintAccruedInterest(_to);
     s_interestRate[_to] = s_interestRate;
@@ -33,6 +37,30 @@ contract RebaseToken is ERC20 {
 
   function balanceOf(address _user) public view override returns (uint256) {
     return super.balanceOf(_user) * _getAccruedInterest(_user) / PRECISION_FACTOR;
+  }
+
+  function transfer(address _recipient, uint256 _amount) public override returns (bool) {
+    _mintAccruedInterest(msg.sender);
+    _mintAccruedInterest(_recipient);
+    if(_amount == type(uint256).max) {
+      _amount = balanceOf(msg.sender);
+    }
+    if(balanceOf(_recipient) == 0) {
+      s_userInterestRate[_recipient] = s_userInterestRate[msg.sender];
+    }
+    return super.transfer(_recipient, _amount);
+  }
+
+  function transferFrom(address _sender, address _recipient, uint256 _amount) public override returns (bool) {
+    _mintAccruedInterest(_sender);
+    _mintAccruedInterest(_recipient);
+    if(_amount == type(uint256).max) {
+      _amount = balanceOf(_sender);
+    }
+    if(balanceOf(_recipient) == 0) {
+      s_userInterestRate[_recipient] = s_userInterestRate[_sender];
+    }
+    return super.transferFrom(_sender, _recipient, _amount);
   }
 
   function _getAccruedInterest(address _user) internal view returns (uint256) {
@@ -58,5 +86,9 @@ contract RebaseToken is ERC20 {
 
   function getUserInterestRate(address _user) external view returns (uint256) {
     return s_userInterestRate[_user];
+  }
+
+  function getInterestRate() external view returns (uint256) {
+    return s_interestRate;
   }
 }
