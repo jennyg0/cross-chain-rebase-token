@@ -20,6 +20,9 @@ import {IERC20} from "@ccip/contracts/src/v0.8/vendor/openzeppelin-solidity/v4.8
 
 contract CrossChainTest is Test {
     address owner = makeAddr("owner");
+    address user = makeAddr("user");
+    uint256 SEND_VALUE = 1e5;
+
     uint256 sepoliaFork;
     uint256 arbSepoliaFork;
 
@@ -83,6 +86,7 @@ contract CrossChainTest is Test {
         TokenAdminRegistry(arbSepoliaNetworkDetails.tokenAdminRegistryAddress).setPool(
             address(arbSepoliaToken), address(arbSepoliaPool)
         );
+        vm.stopPrank();
         configureTokenPool(
             sepoliaFork,
             address(sepoliaPool),
@@ -97,7 +101,11 @@ contract CrossChainTest is Test {
             address(sepoliaPool),
             address(sepoliaToken)
         );
-        vm.stopPrank();
+
+        console.log("Sepolia fork ID:", sepoliaFork);
+console.log("Arbitrum fork ID:", arbSepoliaFork);
+console.log("Source token address:", address(sepoliaToken));
+console.log("Dest token address:", address(arbSepoliaToken));
     }
 
     function configureTokenPool(
@@ -121,7 +129,7 @@ contract CrossChainTest is Test {
         TokenPool(_localPool).applyChainUpdates(chainsToAdd);
     }
 
-    function bridgeTokensTest(
+    function bridgeTokens(
         uint256 amountToBridge,
         uint256 localFork,
         uint256 remoteFork,
@@ -132,37 +140,66 @@ contract CrossChainTest is Test {
     ) public {
         vm.selectFork(localFork);
 
-
         Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
         tokenAmounts[0] = Client.EVMTokenAmount({token: address(localToken), amount: amountToBridge});
         Client.EVM2AnyMessage memory message = Client.EVM2AnyMessage({
-            receiver: abi.encode(owner),
+            receiver: abi.encode(user),
             data: "",
             tokenAmounts: tokenAmounts,
             feeToken: localNetworkDetails.linkAddress,
             extraArgs: ""
         });
-    
-        uint256 fee = IRouterClient(localNetworkDetails.routerAddress).getFee(remoteNetworkDetails.chainSelector, message);
-            ccipLocalSimulatorFork.requestLinkFromFaucet(owner, fee);
-            vm.prank(owner);
-             IERC20(localNetworkDetails.linkAddress).approve(localNetworkDetails.routerAddress, fee);
-           vm.prank(owner);
-           IERC20(address(localToken)).approve(localNetworkDetails.routerAddress, amountToBridge);
-       uint256 localBalanceBefore = localToken.balanceOf(owner);
-            vm.prank(owner);
-            IRouterClient(localNetworkDetails.routerAddress).ccipSend(remoteNetworkDetails.chainSelector, message);
-        uint256 localBalanceAfter = localToken.balanceOf(owner);
+
+        uint256 fee =
+            IRouterClient(localNetworkDetails.routerAddress).getFee(remoteNetworkDetails.chainSelector, message);
+        ccipLocalSimulatorFork.requestLinkFromFaucet(user, fee);
+        vm.prank(user);
+        IERC20(localNetworkDetails.linkAddress).approve(localNetworkDetails.routerAddress, fee);
+        vm.prank(user);
+        IERC20(address(localToken)).approve(localNetworkDetails.routerAddress, amountToBridge);
+        uint256 localBalanceBefore = localToken.balanceOf(user);
+        vm.prank(user);
+        IRouterClient(localNetworkDetails.routerAddress).ccipSend(remoteNetworkDetails.chainSelector, message);
+        uint256 localBalanceAfter = localToken.balanceOf(user);
         assertEq(localBalanceAfter, localBalanceBefore - amountToBridge);
-        uint256 localUserInterestRate = localToken.getUserInterestRate(owner);
+        uint256 localUserInterestRate = localToken.getUserInterestRate(user);
 
         vm.selectFork(remoteFork);
         vm.warp(block.timestamp + 20 minutes);
-        uint256 remoteBalanceBefore = remoteToken.balanceOf(owner);
+        uint256 remoteBalanceBefore = remoteToken.balanceOf(user);
         ccipLocalSimulatorFork.switchChainAndRouteMessage(remoteFork);
-    uint256 remoteBalanceAfter = remoteToken.balanceOf(owner);
-    assertEq(remoteBalanceAfter, remoteBalanceBefore + amountToBridge);
-    uint256 remoteUserInterestRate = localToken.getUserInterestRate(owner);
-    assertEq(localUserInterestRate, remoteUserInterestRate);
+        uint256 remoteBalanceAfter = remoteToken.balanceOf(user);
+        assertEq(remoteBalanceAfter, remoteBalanceBefore + amountToBridge);
+        uint256 remoteUserInterestRate = remoteToken.getUserInterestRate(user);
+        assertEq(localUserInterestRate, remoteUserInterestRate);
+    }
+
+    function testBridgeAllTokens() public {
+        vm.selectFork(sepoliaFork);
+        vm.deal(user, SEND_VALUE);
+        vm.prank(user);
+        Vault(payable(address(vault))).deposit{value: SEND_VALUE}();
+        bridgeTokens(
+            SEND_VALUE,
+            sepoliaFork,
+            arbSepoliaFork,
+            sepoliaNetworkDetails,
+            arbSepoliaNetworkDetails,
+            sepoliaToken,
+            arbSepoliaToken
+        );
+
+        vm.selectFork(arbSepoliaFork);
+        console.log("balance of arb", arbSepoliaToken.balanceOf(user));
+        vm.warp(block.timestamp + 20 minutes);
+        bridgeTokens(
+            arbSepoliaToken.balanceOf(user),
+            arbSepoliaFork,
+            sepoliaFork,
+            arbSepoliaNetworkDetails,
+            sepoliaNetworkDetails,
+            arbSepoliaToken,
+            sepoliaToken
+        );
     }
 }
